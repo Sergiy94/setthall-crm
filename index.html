@@ -74,12 +74,13 @@
       const [toast, setToast] = useState(null);
       
       const [activeTab, setActiveTab] = useState('rentals');
-      const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile menu state
+      const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); 
       
       const [fopData, setFopData] = useState({ name: '', rnokpp: '', address: '', iban: '', phone: '' });
       const [clients, setClients] = useState([]);
       const [inventory, setInventory] = useState([]);
       const [rentals, setRentals] = useState([]);
+      const [requests, setRequests] = useState([]); // ДОДАНО: Стейт для заявок
 
       const showToast = (msg, type = 'success') => {
         setToast({ msg, type });
@@ -106,6 +107,7 @@
         }
         if (data.clients) setClients(data.clients);
         if (data.inventory) setInventory(data.inventory);
+        if (data.requests) setRequests(data.requests); // ДОДАНО: Парсинг заявок
         if (data.rentals) {
           setRentals(data.rentals.map(r => ({
             ...r,
@@ -156,13 +158,12 @@
 
       const handleTabChange = (tab) => {
         setActiveTab(tab);
-        setIsMobileMenuOpen(false); // Close menu on mobile after selection
+        setIsMobileMenuOpen(false); 
       };
 
-      // --- ДРУК (Акти та Договори) ОНОВЛЕНО ДЛЯ КРАЩОЇ СУМІСНОСТІ З MOBILE ---
+      // --- ДРУК (Акти та Договори) ---
       const printDoc = (html, mode) => {
         const iframe = document.createElement('iframe');
-        // Використовуємо fixed і розміри 1px замість visibility/display none для обходу блокувань Safari
         iframe.style.position = 'fixed';
         iframe.style.right = '0';
         iframe.style.bottom = '0';
@@ -250,6 +251,9 @@
         );
       }
 
+      // ДОДАНО: Підрахунок нових заявок для бейджика в меню
+      const newRequestsCount = requests.filter(r => r.status === 'new').length;
+
       return (
         <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-slate-950 w-full relative">
           {toast && <div className={`fixed top-4 right-4 px-6 py-3 rounded-xl font-bold shadow-xl toast-animate z-50 ${toast.type==='error'?'bg-rose-500':'bg-emerald-500'} text-white`}>{toast.msg}</div>}
@@ -262,7 +266,8 @@
               </div>
               Sett.hall
             </div>
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-white transition-colors">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-white transition-colors relative">
+              {newRequestsCount > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-rose-500 rounded-full"></span>}
               <i data-lucide={isMobileMenuOpen ? "x" : "menu"} className="w-6 h-6"></i>
             </button>
           </div>
@@ -286,6 +291,13 @@
             </div>
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 dark-scroll">
               <MenuBtn active={activeTab==='rentals'} onClick={()=>handleTabChange('rentals')} icon="play" label="Видача / В прокаті" />
+              
+              {/* ДОДАНО: Кнопка заявок з бейджиком */}
+              <button onClick={()=>handleTabChange('requests')} className={`flex items-center justify-between text-left px-4 py-3.5 rounded-xl font-bold transition-all ${activeTab==='requests' ? 'bg-gradient-to-r from-orange-600 to-rose-600 text-white shadow-lg shadow-orange-600/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                <div className="flex items-center gap-3"><i data-lucide="inbox" className="w-5 h-5"></i> Заявки з сайту</div>
+                {newRequestsCount > 0 && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full">{newRequestsCount}</span>}
+              </button>
+
               <MenuBtn active={activeTab==='history'} onClick={()=>handleTabChange('history')} icon="history" label="Історія Прокатів" />
               <MenuBtn active={activeTab==='clients'} onClick={()=>handleTabChange('clients')} icon="users" label="База Клієнтів" />
               <MenuBtn active={activeTab==='inventory'} onClick={()=>handleTabChange('inventory')} icon="box" label="Парк Транспорту" />
@@ -306,6 +318,7 @@
           {/* MAIN CONTENT */}
           <main className="flex-1 overflow-y-auto p-4 md:p-8 dark-scroll relative w-full max-w-full">
             {activeTab === 'rentals' && <RentalsView rentals={rentals} clients={clients} inventory={inventory} setRentals={setRentals} setInventory={setInventory} fopData={fopData} printDoc={printDoc} saveToDB={saveToDB} showToast={showToast} />}
+            {activeTab === 'requests' && <RequestsView requests={requests} setRequests={setRequests} saveToDB={saveToDB} showToast={showToast} />} {/* ДОДАНО: Компонент заявок */}
             {activeTab === 'history' && <HistoryView rentals={rentals} clients={clients} inventory={inventory} fopData={fopData} printDoc={printDoc} />}
             {activeTab === 'clients' && <ClientsView clients={clients} setClients={setClients} fopData={fopData} printDoc={printDoc} saveToDB={saveToDB} showToast={showToast} />}
             {activeTab === 'inventory' && <InventoryView inventory={inventory} setInventory={setInventory} saveToDB={saveToDB} showToast={showToast} />}
@@ -323,6 +336,102 @@
         </button>
       );
     };
+
+    // ==========================================
+    // НОВИЙ РОЗДІЛ: ЗАЯВКИ З САЙТУ
+    // ==========================================
+    function RequestsView({ requests, setRequests, saveToDB, showToast }) {
+      useEffect(() => { lucide.createIcons(); });
+      
+      const [filter, setFilter] = useState('new'); // new, processed, all
+
+      const updateStatus = (req, newStatus) => {
+        const updated = { ...req, status: newStatus };
+        setRequests(requests.map(r => r.id === req.id ? updated : r));
+        saveToDB('update_request', updated);
+        showToast(newStatus === 'processed' ? 'Заявку оброблено!' : 'Заявку скасовано');
+      };
+
+      const filteredRequests = requests
+        .filter(r => filter === 'all' ? true : r.status === filter)
+        .sort((a, b) => new Date(b.dateSubmitted) - new Date(a.dateSubmitted));
+
+      return (
+        <div className="max-w-6xl mx-auto space-y-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 border border-slate-800 p-6 md:p-8 rounded-3xl shadow-xl gap-4">
+            <div>
+              <h1 className="text-3xl font-black text-white flex items-center gap-3">
+                Заявки з сайту
+                {requests.filter(r => r.status === 'new').length > 0 && (
+                  <span className="bg-rose-500 text-white text-sm px-3 py-1 rounded-full">{requests.filter(r => r.status === 'new').length} нових</span>
+                )}
+              </h1>
+              <p className="text-slate-400 mt-1">Керування запитами від клієнтів з лендінгу</p>
+            </div>
+            
+            <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 w-full md:w-auto">
+              <button onClick={()=>setFilter('new')} className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-colors ${filter === 'new' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>Нові</button>
+              <button onClick={()=>setFilter('processed')} className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-colors ${filter === 'processed' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>Оброблені</button>
+              <button onClick={()=>setFilter('all')} className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-colors ${filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>Всі</button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {filteredRequests.map(req => (
+              <div key={req.id} className={`p-6 rounded-3xl border transition-colors shadow-lg relative overflow-hidden ${req.status === 'new' ? 'bg-slate-900 border-orange-500/40' : 'bg-slate-900/50 border-slate-800'}`}>
+                {req.status === 'new' && <div className="absolute top-0 left-0 w-1 h-full bg-orange-500"></div>}
+                {req.status === 'processed' && <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>}
+                
+                <div className="flex flex-col md:flex-row justify-between gap-6">
+                  <div className="space-y-4 flex-1">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className="text-xl font-black text-white">{req.name}</h3>
+                      <a href={`tel:${req.phone}`} className="text-indigo-400 font-mono font-bold hover:underline bg-indigo-500/10 px-3 py-1 rounded-lg border border-indigo-500/20">{req.phone}</a>
+                      <span className="text-xs text-slate-500">Створено: {new Date(req.dateSubmitted).toLocaleString('uk-UA')}</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-slate-950 p-4 rounded-2xl border border-slate-800/50">
+                      <div>
+                        <div className="text-xs text-slate-500 font-bold uppercase mb-1">Бажана дата</div>
+                        <div className="text-white font-medium">{req.desiredDate ? new Date(req.desiredDate).toLocaleDateString('uk-UA') : 'Не вказано'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-500 font-bold uppercase mb-1">Кількість</div>
+                        <div className="text-white font-medium">{req.quantity || '1'} од.</div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-xs text-slate-500 font-bold uppercase mb-1">Побажання</div>
+                        <div className="text-slate-300 italic">{req.notes || 'Без додаткових побажань'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex md:flex-col gap-2 justify-end min-w-[140px]">
+                    {req.status === 'new' ? (
+                      <>
+                        <button onClick={() => updateStatus(req, 'processed')} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-3 rounded-xl font-bold flex justify-center items-center gap-2 transition-colors"><i data-lucide="check" className="w-4 h-4"></i> Оброблено</button>
+                        <button onClick={() => updateStatus(req, 'rejected')} className="flex-1 bg-slate-800 hover:bg-slate-700 text-rose-400 px-4 py-3 rounded-xl font-bold flex justify-center items-center gap-2 transition-colors"><i data-lucide="x" className="w-4 h-4"></i> Скасувати</button>
+                      </>
+                    ) : (
+                      <div className={`flex justify-center items-center gap-2 p-3 rounded-xl font-bold ${req.status === 'processed' ? 'text-emerald-500 bg-emerald-500/10' : 'text-rose-500 bg-rose-500/10'}`}>
+                        {req.status === 'processed' ? <><i data-lucide="check-circle" className="w-5 h-5"></i> Виконано</> : <><i data-lucide="x-circle" className="w-5 h-5"></i> Скасовано</>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {filteredRequests.length === 0 && (
+              <div className="text-slate-500 text-center p-12 bg-slate-900/40 rounded-3xl border border-slate-800 border-dashed font-medium">
+                Немає заявок у цій категорії.
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
 
     // ==========================================
     // 1. ВИДАЧА ТА В ПРОКАТІ
@@ -425,7 +534,6 @@
         const rentedBikes = inventory.filter(b => rental.bikeIds.includes(b.id));
         const totalValue = rentedBikes.reduce((sum, b) => sum + Number(b.value), 0);
         
-        // Виправлено: безпечний доступ до ID для уникнення помилок
         const contractBase = client.contractType === 'electronic' 
           ? `Публічного договору прокату (Оферти)`
           : `Договору прокату № П-${String(client.id || '').slice(-4)}`;
@@ -529,7 +637,6 @@
             </form>
           )}
 
-          {}
           {showReturn && (
             <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
               <form onSubmit={handleReturn} className="bg-slate-900 border border-slate-700 p-6 md:p-8 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto dark-scroll">
@@ -634,7 +741,6 @@
         const client = clients.find(c => c.id === rental.clientId) || {};
         const rentedBikes = inventory.filter(b => rental.bikeIds.includes(b.id));
         
-        // Виправлено: безпечний доступ до ID
         const contractBase = client.contractType === 'electronic' ? `Публічного договору прокату` : `Договору № П-${String(client.id || '').slice(-4)}`;
 
         let html = mode === 'a4' ? `
@@ -683,7 +789,6 @@
              
              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Пошук за номером Акту або іменем клієнта..." className="w-full bg-slate-900 border border-slate-800 p-4 rounded-xl text-white outline-none focus:border-orange-500 transition-colors" />
 
-             {/* Додано overflow-x-auto для мобільної адаптації таблиці */}
              <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-x-auto shadow-xl">
                 <table className="w-full text-left text-sm min-w-[700px]">
                    <thead className="bg-slate-950 text-slate-400"><tr><th className="p-4 md:p-5 font-bold">Акт / Час</th><th className="p-4 md:p-5 font-bold">Клієнт / Майно</th><th className="p-4 md:p-5 font-bold">Фінанси / Стан</th><th className="p-4 md:p-5 text-right font-bold">Друк Актів</th></tr></thead>
@@ -747,14 +852,12 @@
       const openAdd = () => { setC({ name: '', phone: '', docType: 'Паспорт (ID картка)', docNumber: '', contractType: 'electronic', contractLink: '', docIssuedBy: '', address: '' }); setShowAdd(true); setShowEdit(null); };
       
       const printContract = (client) => {
-        // Виправлено: БЕЗПЕЧНЕ ФОРМАТУВАННЯ ДАТИ (уникає помилки `split` на деяких пристроях)
         const now = new Date();
         const day = String(now.getDate()).padStart(2, '0');
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const year = String(now.getFullYear());
         const dateStr = `«${day}» ${month} ${year} р.`;
         
-        // Виправлено: БЕЗПЕЧНИЙ ДОСТУП ДО ID
         const num = `П-${String(client.id || '').slice(-4)}`;
         
         const html = `
@@ -877,7 +980,6 @@
 
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Пошук клієнта..." className="w-full bg-slate-900 border border-slate-800 p-4 rounded-2xl text-white outline-none focus:border-indigo-500 transition-colors shadow-sm" />
           
-          {/* Додано overflow-x-auto для уникнення розриву макету на мобільному */}
           <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-xl overflow-x-auto">
             <table className="w-full text-left text-sm min-w-[600px]">
               <thead className="bg-slate-950 text-slate-400"><tr><th className="p-4 md:p-5 font-bold">Клієнт</th><th className="p-4 md:p-5 font-bold">Контакти / Документ</th><th className="p-4 md:p-5 font-bold">Договір</th><th className="p-4 md:p-5 text-right font-bold">Дії</th></tr></thead>
